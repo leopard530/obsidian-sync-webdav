@@ -136,8 +136,9 @@ export class SyncEngine {
 					}
 				} catch (err: any) {
 					result.errors++;
-					result.errorMessages.push(`${vaultPath}: ${err?.message ?? 'Unknown error'}`);
-					console.error(`SyncEngine: error syncing ${vaultPath}:`, err);
+					const msg = err?.message ?? String(err ?? 'Unknown error');
+					result.errorMessages.push(`${vaultPath}: ${msg}`);
+					console.error(`SyncEngine: error syncing ${vaultPath}: ${msg}`, err);
 				}
 			}
 
@@ -173,6 +174,7 @@ export class SyncEngine {
 				if (!(file instanceof TFile)) return;
 
 				const localSha256 = await this.computeSha256(file);
+				await this.ensureRemoteDirectory(vaultPath);
 
 				if (isBinaryFile(vaultPath)) {
 					const arrayBuffer = await this.app.vault.readBinary(file);
@@ -209,7 +211,8 @@ export class SyncEngine {
 				await this.stateManager.removeFileRecord(oldVaultPath);
 			}
 		} catch (err: any) {
-			console.error(`SyncEngine: syncFile failed for ${path}:`, err);
+			const msg = err?.message ?? String(err ?? 'unknown error');
+			console.error(`SyncEngine: syncFile failed for ${path}: ${msg}`, err);
 		}
 	}
 
@@ -276,6 +279,8 @@ export class SyncEngine {
 		_remoteInfo: WebDAVFileInfo | undefined,
 		result: SyncResult,
 	): Promise<void> {
+		await this.ensureRemoteDirectory(vaultPath);
+
 		if (isBinaryFile(vaultPath)) {
 			const arrayBuffer = await this.app.vault.readBinary(localFile);
 			await this.client.uploadFile(vaultPath, arrayBuffer, getMimeType(vaultPath));
@@ -380,6 +385,23 @@ export class SyncEngine {
 	}
 
 	// ─── Helpers ──────────────────────────────────────────────
+
+	/**
+	 * Ensure the parent directory chain exists on the remote server.
+	 * Uses MKCOL for each missing directory level.
+	 * createDirectory handles "already exists" (405) gracefully.
+	 */
+	private async ensureRemoteDirectory(vaultPath: string): Promise<void> {
+		const dirPath = vaultPath.substring(0, vaultPath.lastIndexOf('/'));
+		if (!dirPath) return;
+
+		const parts = dirPath.split('/');
+		let current = '';
+		for (const part of parts) {
+			current = current ? `${current}/${part}` : part;
+			await this.client.createDirectory(current);
+		}
+	}
 
 	private async computeSha256(file: TFile): Promise<string> {
 		const arrayBuffer = await this.app.vault.readBinary(file);

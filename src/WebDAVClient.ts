@@ -275,8 +275,10 @@ export class WebDAVClient {
 				throw: false,
 			});
 
-			// 201 Created, 200 OK, 202 Accepted, 204 No Content, 405 Method Not Allowed (exists)
-			const okStatuses = [200, 201, 202, 204, 405];
+			// 201 Created, 200 OK, 202 Accepted, 204 No Content: success
+			// 405 Method Not Allowed: directory already exists (standard)
+			// 401/403: some NAS (FNOS, etc.) return these instead of 405 for existing dirs
+			const okStatuses = [200, 201, 202, 204, 401, 403, 405];
 			if (!okStatuses.includes(response.status)) {
 				throw new Error(`MKCOL failed for ${remoteDirPath}: HTTP ${response.status}`);
 			}
