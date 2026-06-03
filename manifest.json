@@ -1,0 +1,11 @@
+{
+	"id": "obsidian-sync-webdav",
+	"name": "WebDAV Sync",
+	"version": "1.0.0",
+	"minAppVersion": "1.0.0",
+	"description": "Bidirectional vault sync via WebDAV. Supports FNOS, Synology, QNAP, Nextcloud and more.",
+	"author": "storyteller",
+	"authorUrl": "",
+	"isDesktopOnly": false,
+	"repo": "leopard530/obsidian-sync-webdav"
+}
