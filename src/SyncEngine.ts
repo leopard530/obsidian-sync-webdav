@@ -241,7 +241,6 @@ export class SyncEngine {
 				// Download remote as "filename (server conflict).md" and upload local
 				const conflictPath = this.makeConflictPath(vaultPath);
 				try {
-					const remoteContent = await this.client.downloadFile(vaultPath);
 					const dirPath = conflictPath.substring(0, conflictPath.lastIndexOf('/'));
 					if (dirPath) {
 						const dir = this.app.vault.getAbstractFileByPath(dirPath);
@@ -249,7 +248,13 @@ export class SyncEngine {
 							await this.app.vault.createFolder(dirPath);
 						}
 					}
-					await this.app.vault.create(conflictPath, remoteContent);
+					if (isBinaryFile(vaultPath)) {
+						const remoteBuffer = await this.client.downloadFileBinary(vaultPath);
+						await this.app.vault.createBinary(conflictPath, remoteBuffer);
+					} else {
+						const remoteContent = await this.client.downloadFile(vaultPath);
+						await this.app.vault.create(conflictPath, remoteContent);
+					}
 					new Notice(t('conflict.saved', { path: conflictPath }));
 				} catch {
 					new Notice(t('conflict.downloadFailed', { path: vaultPath }));

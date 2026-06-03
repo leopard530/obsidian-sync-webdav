@@ -2,8 +2,8 @@ import { App } from 'obsidian';
 import type { SyncState, SyncFileRecord } from './types';
 import { EMPTY_SYNC_STATE } from './types';
 
-/** Current schema version for forward compatibility */
-const SCHEMA_VERSION = 1;
+/** Current schema version — bump to force state reset (e.g. after bug fixes) */
+const SCHEMA_VERSION = 2;
 
 /**
  * SyncStateManager — persists sync state to .obsidian/plugins/obsidian-sync-webdav/sync-state.json
@@ -41,15 +41,22 @@ export class SyncStateManager {
 			const content = await adapter.read(this.filePath);
 			const parsed = JSON.parse(content) as Partial<SyncState>;
 
-			// Validate schemaVersion
+			// Validate schemaVersion:
+			// - Missing or invalid → reset
+			// - Older than current → reset (schema bump indicates breaking change / bug fix)
+			// - Newer than current → load as-is (forward-compatible)
 			if (typeof parsed.schemaVersion !== 'number' || parsed.schemaVersion < 1) {
-				// Unknown or missing schema — treat as corrupt, reset
 				this.state = { ...EMPTY_SYNC_STATE, files: { ...EMPTY_SYNC_STATE.files } };
 				return this.state;
 			}
 
-			// Forward-compatibility: higher schema versions are unknown —
-			// still load but don't drop records
+			if (parsed.schemaVersion < SCHEMA_VERSION) {
+				// Old schema — reset state to force clean re-sync
+				console.log(`[WebDAV Sync] Resetting sync state: schema v${parsed.schemaVersion} → v${SCHEMA_VERSION}`);
+				this.state = { ...EMPTY_SYNC_STATE, files: { ...EMPTY_SYNC_STATE.files } };
+				return this.state;
+			}
+
 			if (parsed.schemaVersion > SCHEMA_VERSION) {
 				// Future schema — load as-is but keep schemaVersion intact
 				this.state = {
@@ -57,7 +64,7 @@ export class SyncStateManager {
 					files: parsed.files ?? {},
 				};
 			} else {
-				// Current known schema
+				// Current schema
 				this.state = {
 					schemaVersion: parsed.schemaVersion,
 					files: parsed.files ?? {},

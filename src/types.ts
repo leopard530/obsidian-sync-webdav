@@ -66,7 +66,7 @@ export interface SyncState {
 
 /** Initial empty sync state */
 export const EMPTY_SYNC_STATE: SyncState = {
-	schemaVersion: 1,
+	schemaVersion: 2,
 	files: {},
 };
 
