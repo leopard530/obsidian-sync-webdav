@@ -12,6 +12,7 @@ import type { WebDAVSyncSettings, SyncResult, SyncFileRecord, WebDAVFileInfo } f
 import { WebDAVClient } from './WebDAVClient';
 import { SyncStateManager } from './SyncState';
 import { t } from './i18n';
+import { isBinaryFile, getMimeType } from './utils/binary';
 
 export class SyncEngine {
 	private readonly app: App;
@@ -172,8 +173,14 @@ export class SyncEngine {
 				if (!(file instanceof TFile)) return;
 
 				const localSha256 = await this.computeSha256(file);
-				const content = await this.app.vault.read(file);
-				await this.client.uploadFile(vaultPath, content);
+
+				if (isBinaryFile(vaultPath)) {
+					const arrayBuffer = await this.app.vault.readBinary(file);
+					await this.client.uploadFile(vaultPath, arrayBuffer, getMimeType(vaultPath));
+				} else {
+					const content = await this.app.vault.read(file);
+					await this.client.uploadFile(vaultPath, content, getMimeType(vaultPath));
+				}
 
 				// Get accurate ETag from server after upload
 				const stat = await this.client.statFile(vaultPath);
@@ -269,8 +276,13 @@ export class SyncEngine {
 		_remoteInfo: WebDAVFileInfo | undefined,
 		result: SyncResult,
 	): Promise<void> {
-		const content = await this.app.vault.read(localFile);
-		await this.client.uploadFile(vaultPath, content);
+		if (isBinaryFile(vaultPath)) {
+			const arrayBuffer = await this.app.vault.readBinary(localFile);
+			await this.client.uploadFile(vaultPath, arrayBuffer, getMimeType(vaultPath));
+		} else {
+			const content = await this.app.vault.read(localFile);
+			await this.client.uploadFile(vaultPath, content, getMimeType(vaultPath));
+		}
 
 		// Fetch the real ETag from the server after upload.
 		// Avoids storing empty ETag which causes spurious re-download on next sync.
@@ -294,42 +306,71 @@ export class SyncEngine {
 		remoteInfo: WebDAVFileInfo,
 		result: SyncResult,
 	): Promise<void> {
-		const content = await this.client.downloadFile(vaultPath);
-
-		// Use vault API so Obsidian properly indexes the file.
-		// adapter.write() writes to disk but Obsidian won't detect it.
 		const existingFile = this.app.vault.getAbstractFileByPath(vaultPath);
-		if (existingFile instanceof TFile) {
-			await this.app.vault.modify(existingFile, content);
-		} else {
-			// Ensure parent directories exist
-			const dirPath = vaultPath.substring(0, vaultPath.lastIndexOf('/'));
-			if (dirPath) {
-				const dir = this.app.vault.getAbstractFileByPath(dirPath);
-				if (!dir) {
-					await this.app.vault.createFolder(dirPath);
-				}
+
+		// Ensure parent directories exist for new files
+		const dirPath = vaultPath.substring(0, vaultPath.lastIndexOf('/'));
+		if (!existingFile && dirPath) {
+			const dir = this.app.vault.getAbstractFileByPath(dirPath);
+			if (!dir) {
+				await this.app.vault.createFolder(dirPath);
 			}
-			await this.app.vault.create(vaultPath, content);
 		}
 
-		// Compute local SHA-256 for the freshly downloaded file
-		const arrayBuffer = new TextEncoder().encode(content).buffer;
-		const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
-		const hashArray = Array.from(new Uint8Array(hashBuffer));
-		const localSha256 = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+		if (isBinaryFile(vaultPath)) {
+			const arrayBuffer = await this.client.downloadFileBinary(vaultPath);
 
-		const record: SyncFileRecord = {
-			localSha256,
-			localMtime: Date.now(),
-			localSize: content.length,
-			remoteEtag: remoteInfo.etag,
-			remoteLastModified: remoteInfo.lastModified,
-			remoteSize: remoteInfo.size,
-			lastSyncTime: new Date().toISOString(),
-		};
-		await this.stateManager.setFileRecord(vaultPath, record);
-		result.downloaded++;
+			// Use vault API so Obsidian properly indexes the file.
+			if (existingFile instanceof TFile) {
+				await this.app.vault.modifyBinary(existingFile, arrayBuffer);
+			} else {
+				await this.app.vault.createBinary(vaultPath, arrayBuffer);
+			}
+
+			// Compute local SHA-256 from the raw ArrayBuffer
+			const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+			const hashArray = Array.from(new Uint8Array(hashBuffer));
+			const localSha256 = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+
+			const record: SyncFileRecord = {
+				localSha256,
+				localMtime: Date.now(),
+				localSize: arrayBuffer.byteLength,
+				remoteEtag: remoteInfo.etag,
+				remoteLastModified: remoteInfo.lastModified,
+				remoteSize: remoteInfo.size,
+				lastSyncTime: new Date().toISOString(),
+			};
+			await this.stateManager.setFileRecord(vaultPath, record);
+			result.downloaded++;
+		} else {
+			const content = await this.client.downloadFile(vaultPath);
+
+			// Use vault API so Obsidian properly indexes the file.
+			if (existingFile instanceof TFile) {
+				await this.app.vault.modify(existingFile, content);
+			} else {
+				await this.app.vault.create(vaultPath, content);
+			}
+
+			// Compute local SHA-256 for the freshly downloaded file
+			const textBuffer = new TextEncoder().encode(content).buffer;
+			const hashBuffer = await crypto.subtle.digest('SHA-256', textBuffer);
+			const hashArray = Array.from(new Uint8Array(hashBuffer));
+			const localSha256 = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+
+			const record: SyncFileRecord = {
+				localSha256,
+				localMtime: Date.now(),
+				localSize: content.length,
+				remoteEtag: remoteInfo.etag,
+				remoteLastModified: remoteInfo.lastModified,
+				remoteSize: remoteInfo.size,
+				lastSyncTime: new Date().toISOString(),
+			};
+			await this.stateManager.setFileRecord(vaultPath, record);
+			result.downloaded++;
+		}
 	}
 
 	private async doDeleteRemote(vaultPath: string, result: SyncResult): Promise<void> {

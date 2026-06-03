@@ -188,15 +188,37 @@ export class WebDAVClient {
 	}
 
 	/**
+	 * Download a file's content as binary data from the remote server.
+	 * @param remoteFilePath - Vault-relative file path
+	 */
+	async downloadFileBinary(remoteFilePath: string): Promise<ArrayBuffer> {
+		return this.retry(async () => {
+			const url = this.buildUrl(remoteFilePath);
+			const response = await requestUrl({
+				url,
+				method: 'GET',
+				headers: this.getAuthHeaders(),
+				throw: false,
+			});
+
+			if (response.status < 200 || response.status >= 300) {
+				throw new Error(`GET failed for ${remoteFilePath}: HTTP ${response.status}`);
+			}
+
+			return response.arrayBuffer;
+		});
+	}
+
+	/**
 	 * Upload file content to the remote server.
 	 * @param remoteFilePath - Vault-relative file path
-	 * @param content - File content as string
-	 * @param contentType - MIME type (default: text/markdown)
+	 * @param content - File content as string or ArrayBuffer
+	 * @param contentType - MIME type for the file
 	 */
 	async uploadFile(
 		remoteFilePath: string,
-		content: string,
-		contentType = 'text/markdown',
+		content: string | ArrayBuffer,
+		contentType: string,
 	): Promise<void> {
 		return this.retry(async () => {
 			const url = this.buildUrl(remoteFilePath);
