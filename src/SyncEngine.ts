@@ -131,6 +131,21 @@ export class SyncEngine {
 							console.log(`[WebDAV Sync] Download new remote: ${vaultPath}`);
 							await this.doDownload(vaultPath, remoteInfo!, result);
 						}
+					} else if (localExists && remoteExists && !recordExists) {
+						// Both exist, no record (e.g. state reset).
+						// Compare timestamps to pick the newer side.
+						const remoteTime = new Date(remoteInfo!.lastModified).getTime();
+						const localTime = localFile!.stat.mtime;
+						if (remoteTime > localTime) {
+							console.log(`[WebDAV Sync] Download (remote newer, no record): ${vaultPath}`);
+							await this.doDownload(vaultPath, remoteInfo!, result);
+						} else if (localTime > remoteTime) {
+							console.log(`[WebDAV Sync] Upload (local newer, no record): ${vaultPath}`);
+							await this.doUpload(localFile!, vaultPath, localSha256, remoteInfo!, result);
+						} else {
+							// Same timestamp — just seed the baseline record
+							await this.createBaselineRecord(localFile!, vaultPath, localSha256, remoteInfo!);
+						}
 					} else {
 						result.skipped++;
 					}
@@ -390,6 +405,28 @@ export class SyncEngine {
 	}
 
 	// ─── Helpers ──────────────────────────────────────────────
+
+	/**
+	 * Seed the sync record when both sides have the file but no record exists
+	 * (e.g. after state reset). Establishes a baseline for future comparisons.
+	 */
+	private async createBaselineRecord(
+		localFile: TFile,
+		vaultPath: string,
+		localSha256: string,
+		remoteInfo: WebDAVFileInfo,
+	): Promise<void> {
+		const record: SyncFileRecord = {
+			localSha256,
+			localMtime: localFile.stat.mtime,
+			localSize: localFile.stat.size,
+			remoteEtag: remoteInfo.etag,
+			remoteLastModified: remoteInfo.lastModified,
+			remoteSize: remoteInfo.size,
+			lastSyncTime: new Date().toISOString(),
+		};
+		await this.stateManager.setFileRecord(vaultPath, record);
+	}
 
 	/**
 	 * Ensure the parent directory chain exists on the remote server.
